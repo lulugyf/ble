@@ -32,6 +32,16 @@ func Connect(zksStr string) *myzk {
 	return &myzk{conn}
 }
 
+func (z *myzk) ReadData(path string) string {
+	data, stat, err := z.Get(path)
+	if err != nil {
+		log.Printf("can not ReadData: %s, %v", path, err)
+		return ""
+	}
+	log.Printf("get:    %+v %+v\n", string(data), stat)
+	return string(data)
+}
+
 /*
 create a node force, is exists then delete
 */

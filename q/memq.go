@@ -34,13 +34,32 @@ type PrioQueue struct {
 
 	min_locking_time int64 //当前队列中在途消息最小的锁定时间， -1 为无锁定
 
-	max_onroad      int                  //最大在途消息
-	max_tries       int                  //最大消费重试次数
+	// 配置数据
+	max_request int //最大在途消息, 默认值20
+	max_retries int //最大消费重试次数, 默认值20
+	min_timeout int //最小锁定时间， 单位s， 默认值5
+	max_timeout int // 最大锁定时间， 单位s， 默认值600
+
 	grouplocks      map[string]int64     //已锁定的组
 	messages        map[string]*List     //以groupid为key 保存消息链表
 	messageids      map[string]*MsgIndex //以messageid 为key， 保存的消息索引
 	lockingMessages map[string]*MsgIndex //所有在途消息
 	plist           *SortList            //优先级链表， 其值为groupid
+}
+
+func NewQueue(topic_id, cli_id string) *PrioQueue {
+	r := &PrioQueue{Dst_cli_id: cli_id, Dst_topic_id: topic_id,
+		max_request:      20,
+		max_retries:      20,
+		min_timeout:      5,
+		max_timeout:      600,
+		min_locking_time: -1,
+		grouplocks:       make(map[string]int64),
+		messages:         make(map[string]*List),
+		messageids:       make(map[string]*MsgIndex),
+		lockingMessages:  make(map[string]*MsgIndex),
+		plist:            NewSortList()}
+	return r
 }
 
 func (p *PrioQueue) setminlocktime(tm_now, tm_lock int64) {
@@ -49,19 +68,6 @@ func (p *PrioQueue) setminlocktime(tm_now, tm_lock int64) {
 	} else if tm_lock < p.min_locking_time {
 		p.min_locking_time = tm_lock
 	}
-}
-
-func NewQueue(topic_id, cli_id string) *PrioQueue {
-	r := &PrioQueue{Dst_cli_id: cli_id, Dst_topic_id: topic_id,
-		max_onroad:       20,
-		max_tries:        10,
-		min_locking_time: -1,
-		grouplocks:       make(map[string]int64),
-		messages:         make(map[string]*List),
-		messageids:       make(map[string]*MsgIndex),
-		lockingMessages:  make(map[string]*MsgIndex),
-		plist:            NewSortList()}
-	return r
 }
 
 func (p *PrioQueue) Push(mi *MsgIndex) bool {
@@ -104,8 +110,8 @@ func (p *PrioQueue) Pull(locktime int64) *MsgIndex {
 	var mi *MsgIndex
 	mi = nil
 	time_now := time.Now().Unix()
-	if len(p.lockingMessages) >= p.max_onroad && p.min_locking_time > time_now {
-		log.Printf("pull: max onroad reached, %d\n", p.max_onroad)
+	if len(p.lockingMessages) >= p.max_request && p.min_locking_time > time_now {
+		log.Printf("pull: max onroad reached, %d\n", p.max_request)
 		return nil
 	}
 	p.plist.Iter(func(key int, groupid string) int {
@@ -154,11 +160,11 @@ func (p *PrioQueue) Pull(locktime int64) *MsgIndex {
 					continue
 				}
 			}
-			if mx.Retry >= p.max_tries {
+			if mx.Retry >= p.max_retries {
 				// 超过重试次数， 删除
 				p.remove(mx)
 				x = lm.remove(x)
-				log.Printf("pull: msg too retries %s, %d\n", mx.Id, p.max_tries)
+				log.Printf("pull: msg too retries %s, %d\n", mx.Id, p.max_retries)
 				continue
 			}
 			mi = mx
